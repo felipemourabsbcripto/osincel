@@ -9,6 +9,9 @@ import os
 
 app = Flask(__name__)
 
+# Dicionário para armazenar desafios ACME (usado para Let's Encrypt)
+acme_challenges = {}
+
 def validate_and_format_phone(phone):
     """Valida e formata número de telefone"""
     if not phone:
@@ -168,6 +171,29 @@ def detectar_operadora(prefixo):
     else:
         return "Não identificada"
 
+# ============= ENDPOINTS ACME (Let's Encrypt) =============
+
+@app.route('/.well-known/acme-challenge/<token>')
+def acme_challenge(token):
+    """Endpoint para validação Let's Encrypt - retorna o conteúdo do desafio"""
+    # Verifica se temos o conteúdo armazenado
+    if token in acme_challenges:
+        return acme_challenges[token], 200, {'Content-Type': 'text/plain'}
+    # Se não temos, retorna placeholder para testes
+    return f"{token}.test-placeholder", 200, {'Content-Type': 'text/plain'}
+
+@app.route('/admin/acme-challenge', methods=['POST'])
+def set_acme_challenge():
+    """Endpoint para configurar desafio ACME (uso interno/admin)"""
+    data = request.get_json()
+    if not data or 'token' not in data or 'validation' not in data:
+        return jsonify({"erro": "Campos 'token' e 'validation' são obrigatórios"}), 400
+    
+    acme_challenges[data['token']] = data['validation']
+    return jsonify({"status": "ok", "token": data['token']}), 200
+
+# ============= ENDPOINTS DA API =============
+
 @app.route('/')
 def index():
     """Página inicial com documentação"""
@@ -175,6 +201,7 @@ def index():
         "nome": "PhoneOsint API",
         "versao": "1.2",
         "autor": "PhoneOsint",
+        "ssl": "Ativado com Let's Encrypt",
         "endpoints": {
             "GET /": "Esta documentação",
             "GET /api/phone/<numero>": "Consulta informações de um número de telefone",
@@ -242,7 +269,7 @@ def post_phone():
 @app.route('/health')
 def health():
     """Health check"""
-    return jsonify({"status": "ok", "servico": "PhoneOsint API", "versao": "1.2"})
+    return jsonify({"status": "ok", "servico": "PhoneOsint API", "versao": "1.2", "ssl": "ativado"})
 
 @app.errorhandler(404)
 def not_found(error):
@@ -259,11 +286,3 @@ def bad_request(error):
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False)
-
-# Let's Encrypt validation endpoint
-@app.route('/.well-known/acme-challenge/<token>')
-def acme_challenge(token):
-    """Endpoint para validação Let's Encrypt"""
-    # Aqui retornaremos o conteúdo do desafio
-    return f"{token}. placeholder", 200
-
