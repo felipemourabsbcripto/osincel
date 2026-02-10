@@ -259,3 +259,11 @@ def bad_request(error):
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
     app.run(host='0.0.0.0', port=port, debug=False)
+
+# Let's Encrypt validation endpoint
+@app.route('/.well-known/acme-challenge/<token>')
+def acme_challenge(token):
+    """Endpoint para validação Let's Encrypt"""
+    # Aqui retornaremos o conteúdo do desafio
+    return f"{token}. placeholder", 200
+
