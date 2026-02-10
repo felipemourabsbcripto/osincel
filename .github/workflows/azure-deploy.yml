@@ -1,0 +1,76 @@
+name: Deploy to Azure
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+env:
+  AZURE_CONTAINER_REGISTRY: osincelregistry
+  CONTAINER_NAME: phoneosint
+  RESOURCE_GROUP: osincel-rg
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Log in to Azure
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+        
+    - name: Create Container Registry (if not exists)
+      run: |
+        az acr show --name ${{ env.AZURE_CONTAINER_REGISTRY }} --resource-group ${{ env.RESOURCE_GROUP }} || \
+        az acr create \
+          --name ${{ env.AZURE_CONTAINER_REGISTRY }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --sku Basic \
+          --admin-enabled true
+          
+    - name: Build and Push Image
+      run: |
+        az acr build \
+          --registry ${{ env.AZURE_CONTAINER_REGISTRY }} \
+          --image ${{ env.CONTAINER_NAME }}:${{ github.sha }} \
+          --image ${{ env.CONTAINER_NAME }}:latest \
+          .
+          
+    - name: Deploy to Container Instances
+      run: |
+        az container show \
+          --name ${{ env.CONTAINER_NAME }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} 2>/dev/null && \
+        az container delete \
+          --name ${{ env.CONTAINER_NAME }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --yes || true
+          
+        az container create \
+          --name ${{ env.CONTAINER_NAME }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --image ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.CONTAINER_NAME }}:latest \
+          --cpu 1 \
+          --memory 1.5 \
+          --registry-login-server ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io \
+          --registry-username ${{ secrets.ACR_USERNAME }} \
+          --registry-password ${{ secrets.ACR_PASSWORD }} \
+          --dns-name-label ${{ env.CONTAINER_NAME }} \
+          --ports 8080 \
+          --os-type Linux
+          
+    - name: Get Container URL
+      run: |
+        echo "Container deployed successfully!"
+        az container show \
+          --name ${{ env.CONTAINER_NAME }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --query "ipAddress.fqdn" \
+          --output tsv
