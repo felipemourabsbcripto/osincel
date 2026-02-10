@@ -1,33 +1,27 @@
-FROM ubuntu:22.04
+FROM python:3.11-slim
 
-# Evita prompts interativos
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Instala dependências necessárias
+# Instala dependências do sistema
 RUN apt-get update && apt-get install -y \
     curl \
     wget \
     jq \
-    python3 \
-    python3-pip \
     net-tools \
     dnsutils \
     whois \
     nmap \
-    git \
     && rm -rf /var/lib/apt/lists/*
 
-# Cria diretório da aplicação
+# Define diretório de trabalho
 WORKDIR /app
 
-# Copia os arquivos do projeto
+# Copia arquivos do projeto
 COPY . /app/
 
-# Torna o script executável
-RUN chmod +x /app/start.sh
+# Instala dependências Python
+RUN pip install --no-cache-dir flask gunicorn
 
-# Porta exposta (se necessário para web)
+# Expondo porta
 EXPOSE 8080
 
-# Comando padrão
-CMD ["/bin/bash", "/app/start.sh"]
+# Comando para iniciar a API
+CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "app:app"]
