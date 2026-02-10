@@ -17,29 +17,36 @@ def validate_and_format_phone(phone):
     # Remove caracteres não numéricos exceto +
     cleaned = re.sub(r'[^\d+]', '', phone)
     
-    # Se não tem + e tem 11 dígitos (padrão BR com DDD + 9 dígitos)
-    if not cleaned.startswith('+') and len(cleaned) == 11 and cleaned.startswith('1'):
-        cleaned = '+55' + cleaned
-    # Se não tem + e tem 10 dígitos (padrão BR antigo)
-    elif not cleaned.startswith('+') and len(cleaned) == 10 and cleaned.startswith('1'):
-        cleaned = '+55' + cleaned
-    # Se não tem + e tem 13 dígitos começando com 55
-    elif not cleaned.startswith('+') and len(cleaned) == 13 and cleaned.startswith('55'):
-        cleaned = '+' + cleaned
-    # Se começa com 55 mas não tem +
-    elif cleaned.startswith('55') and len(cleaned) >= 12:
-        cleaned = '+' + cleaned
-    
-    # Validação mínima
-    if len(cleaned) < 8:
+    if not cleaned:
         return None
     
-    return cleaned
+    # Se já tem + no início, mantém
+    if cleaned.startswith('+'):
+        return cleaned if len(cleaned) > 8 else None
+    
+    # Se tem 55 no início e mais dígitos, assume Brasil
+    if cleaned.startswith('55') and len(cleaned) >= 12:
+        return '+' + cleaned
+    
+    # Se tem 11 dígitos e começa com 1-9 (DDD brasileiro válido)
+    if len(cleaned) == 11 and cleaned[0] in '123456789':
+        return '+55' + cleaned
+    
+    # Se tem 10 dígitos e começa com DDD válido (sem 9)
+    if len(cleaned) == 10 and cleaned[0] in '123456789':
+        return '+55' + cleaned
+    
+    # Para números internacionais com código de país (sem +)
+    if len(cleaned) >= 10:
+        return '+' + cleaned
+    
+    # Para números curtos, não é válido
+    return None
 
 def get_phone_info(phone):
     """Obtém informações do número de telefone"""
     info = {
-        "numero_original": phone,
+        "numero_original": phone if phone else None,
         "numero": None,
         "valido": False,
         "pais": None,
@@ -75,10 +82,18 @@ def get_phone_info(phone):
         '+51': 'Peru',
         '+56': 'Chile',
         '+57': 'Colômbia',
-        '+58': 'Venezuela'
+        '+58': 'Venezuela',
+        '+61': 'Austrália',
+        '+64': 'Nova Zelândia',
+        '+27': 'África do Sul',
+        '+20': 'Egito',
+        '+90': 'Turquia',
+        '+82': 'Coreia do Sul',
+        '+65': 'Singapura'
     }
     
-    for prefixo, pais in paises.items():
+    # Detecta país
+    for prefixo, pais in sorted(paises.items(), key=lambda x: len(x[0]), reverse=True):
         if phone_clean.startswith(prefixo):
             info["pais"] = pais
             break
@@ -92,12 +107,12 @@ def get_phone_info(phone):
             ddd = numero_limpo[:2]
             info["localizacao"] = f"DDD {ddd} - {get_cidade_ddd(ddd)}"
             
-            # Detecta operadora pelo nono dígito e prefixo
+            # Detecta operadora pelo prefixo (últimos 9 dígitos)
             if len(numero_limpo) >= 9:
-                nono_digito = numero_limpo[2] if len(numero_limpo) > 10 else numero_limpo[1]
-                prefixo = numero_limpo[-9:-7] if len(numero_limpo) >= 9 else ""
-                
-                info["operadora"] = detectar_operadora(prefixo, nono_digito)
+                # Pega os 9 dígitos finais
+                numero_nono = numero_limpo[-9:]
+                prefixo = numero_nono[:2] if len(numero_nono) >= 2 else ""
+                info["operadora"] = detectar_operadora(prefixo)
     
     return info
 
@@ -132,9 +147,11 @@ def get_cidade_ddd(ddd):
     }
     return cidades.get(ddd, 'Desconhecida')
 
-def detectar_operadora(prefixo, nono_digito):
+def detectar_operadora(prefixo):
     """Detecta operadora pelo prefixo"""
-    # Prefixos atualizados (simplificado)
+    if not prefixo:
+        return "Não identificada"
+    
     prefixos_vivo = ['15', '25', '95', '96', '97', '98', '99']
     prefixos_claro = ['21', '22', '23', '24', '31', '32', '33', '34', '35', '36', '37', '38']
     prefixos_tim = ['41', '42', '43', '44', '45', '46', '47', '48', '49', '91', '92', '93', '94']
@@ -156,7 +173,7 @@ def index():
     """Página inicial com documentação"""
     return jsonify({
         "nome": "PhoneOsint API",
-        "versao": "1.1",
+        "versao": "1.2",
         "autor": "PhoneOsint",
         "endpoints": {
             "GET /": "Esta documentação",
@@ -178,11 +195,15 @@ def index():
         ]
     })
 
+@app.route('/api/phone/', defaults={'phone': ''})
 @app.route('/api/phone/<path:phone>')
 def get_phone(phone):
     """Consulta informações de um número de telefone"""
     # Decodifica URL encoding
     phone = phone.replace('%20', ' ').replace('%2B', '+')
+    
+    if not phone:
+        return jsonify({"erro": "Número de telefone não fornecido"}), 400
     
     info = get_phone_info(phone)
     
@@ -194,7 +215,20 @@ def get_phone(phone):
 @app.route('/api/phone', methods=['POST'])
 def post_phone():
     """Consulta informações via POST"""
-    data = request.get_json()
+    # Tenta pegar JSON ou form data
+    data = None
+    
+    try:
+        data = request.get_json(force=True, silent=True)
+    except:
+        pass
+    
+    if not data:
+        # Tenta form data
+        phone = request.form.get('phone') or request.args.get('phone')
+        if phone:
+            data = {'phone': phone}
+    
     if not data or 'phone' not in data:
         return jsonify({"erro": "Campo 'phone' é obrigatório"}), 400
     
@@ -208,7 +242,7 @@ def post_phone():
 @app.route('/health')
 def health():
     """Health check"""
-    return jsonify({"status": "ok", "servico": "PhoneOsint API"})
+    return jsonify({"status": "ok", "servico": "PhoneOsint API", "versao": "1.2"})
 
 @app.errorhandler(404)
 def not_found(error):
@@ -217,6 +251,10 @@ def not_found(error):
 @app.errorhandler(500)
 def server_error(error):
     return jsonify({"erro": "Erro interno do servidor"}), 500
+
+@app.errorhandler(400)
+def bad_request(error):
+    return jsonify({"erro": "Requisição inválida"}), 400
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8080))
